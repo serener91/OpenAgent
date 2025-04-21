@@ -1,0 +1,56 @@
+[project]
+name = "mcp-test"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.12",
+    "langfuse>=2.60.2",
+    "litellm>=1.67.0",
+    "mcp[cli]>=1.5.0",
+    "openai-agents>=0.0.7",
+    "pydantic>=2.10.6",
+    "python-dotenv>=1.1.0",
+    "uvicorn>=0.34.0",
+]
+
+[tool.ruff]
+# Python version (affects how Ruff parses and understands syntax)
+target-version = "py311"
+# Set max line length — 88 is safe, Black-compatible
+line-length = 88
+
+[tool.ruff.lint]
+# Enable important rule categories
+select = [
+"E",    # pycodestyle (style issues)
+"F",    # pyflakes (logical issues)
+"I",    # isort (import sorting)              Keeps import sections clean and sorted
+"C90",  # mccabe (complexity checks)          Warns if an endpoint function is too complex
+"B",    # bugbear (common mistakes)           Flags common Python bugs (e.g., using mutable default args)
+"ASYNC",# asyncio checks (for FastAPI)        Ensures you're using await correctly in endpoints
+"A",    # flake8-builtins (naming conflicts)  Catches accidental use of names like list, dict, etc
+"Q",    # flake8-quotes (quote consistency)   Ensures consistent use of ' vs " in strings
+]
+
+# Ignore specific rules that conflict with Black or are too noisy
+ignore = [
+"E203",  # Whitespace before ':' (Black handles this)
+"E501",  # Line too long (Black handles wrapping)
+"F401",  # Unused imports — disable this if using __init__.py with imports
+]
+
+# Enable import sorting with Ruff (replaces isort)
+[tool.ruff.lint.isort]
+known-first-party = ["app"]  # replace "app" with your local FastAPI package name
+combine-as-imports = true
+force-single-line = false
+split-on-trailing-comma = false
+
+
+# Formatting options (optional)
+[tool.ruff.format]
+quote-style = "double"        # consistent double quotes
+indent-style = "space"
+skip-magic-trailing-comma = true
