@@ -11,3 +11,14 @@ wheels/
 .ruff_cache
 .env
 gpt
+
+
+# Pycharm
+.idea
+
+# vscode
+.vscode
+ada
+
+# Custom
+code_assist

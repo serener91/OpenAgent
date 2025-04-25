@@ -1,19 +1,25 @@
 [project]
-name = "mcp-test"
+name = "OpenAgent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Agents & MCP"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
+    "asyncio>=3.4.3",
     "fastapi>=0.115.12",
-    "langfuse>=2.60.2",
+    "langfuse>=2.60.3",
     "litellm>=1.67.0",
-    "mcp[cli]>=1.5.0",
-    "openai-agents>=0.0.7",
-    "pydantic>=2.10.6",
+    "mcp[cli]>=1.6.0",
+    "openai>=1.73.0",
+    "openpyxl>=3.1.5",
+    "pandas>=2.2.3",
+    "pdfplumber>=0.11.6",
+    "pre-commit>=4.2.0",
+    "pypdf2>=3.0.1",
+    "pytest>=8.3.5",
     "python-dotenv>=1.1.0",
-    "uvicorn>=0.34.0",
 ]
+
 
 [tool.ruff]
 # Python version (affects how Ruff parses and understands syntax)
@@ -54,3 +60,8 @@ split-on-trailing-comma = false
 quote-style = "double"        # consistent double quotes
 indent-style = "space"
 skip-magic-trailing-comma = true
+
+[dependency-groups]
+exp = [
+    "openai-agents>=0.0.11",
+]

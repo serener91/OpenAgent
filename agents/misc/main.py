@@ -42,7 +42,10 @@ async def use_function(model: str = "gpt-4o"):
         model=model,
         name="Hello world",
         instructions="You are a helpful agent.",
+        handoff_description="A description of the agent. This is used when the agent is used as a handoff, so that an LLM knows what it does and when to invoke it.",
         tools=[get_weather],
+        mcp_servers=[], # Every time the agent runs, it will include tools from these servers in the list of available tools
+
     )
     result = await Runner.run(agent, input="What's the weather in Tokyo?")
     return result.final_output
