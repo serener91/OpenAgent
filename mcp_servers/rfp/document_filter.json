@@ -1,0 +1,6 @@
+{
+  "mar_summary": ["MAR"],
+  "sfr_summary": ["SFR"],
+  "budget_extractor": ["사업비", "사 업 비"],
+  "time_extractor": ["사업기간", "용역기간"]
+}
