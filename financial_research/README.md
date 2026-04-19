@@ -13,7 +13,7 @@
 
 **Logic Flow**
 
-```mermaid
+```
     ["User Query"]
          |
     [Planner (Task Decomposition)]
