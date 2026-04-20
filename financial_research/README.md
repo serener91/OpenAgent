@@ -41,7 +41,8 @@
 * **Search**: 인터넷 검색을 통한 관련 정보 수집 (병렬 처리).
 * **Writer**: Subagents(Financial analyst & Risk analyst)을 활용 하여 수집된 근거 기반 초안 작성.
 * **Auditor**: Writer가 작성한 주장의 타당성, 일관성, 근거 유무 검증.
-* **Formatter**: 마크다운 형식의 최종 리포트 변환.
+* **Formatter**: Markdown 혹은 pptx 형태로 최종 리포트 생성. (pptx는 직접 만든 pptx 생성 라이브러리 MCP 서버를 활용) 
+* 참고: [ppt-creator](https://github.com/serener91/AI-native-ppt-creator) 
 
 ### **2.2 Pydantic 기반 Structured Handoff**
 에이전트 간 데이터 전달 시 **Typed Schema**를 사용하여 인터페이스를 규격화했습니다.
@@ -78,22 +79,20 @@
 
 ## 4. Business Value & Outcome
 
+Financial Researcher는 agent system을 설계하면서 마주칠수 있는 문제 (Infinite Loop, Hallucination, Broken Communication, high operational costs) 등을
+해결하는 방법에 대하여 다룹니다:
+
 * **신뢰성 확보**: Feedback Loop를 통해 LLM의 Hallucination을 최소화하고 Fact 중심의 리포트 생성.
 * **효율성 증대**: 반복적인 시장 조사 및 리포트 작성 업무를 자동화.
 * **유연한 확장**: 새로운 도구(예: Valuation API, Sentiment 분석)를 Specialist Tool 형태로 쉽게 통합 가능.
 
+또한 이를 기반으로 목적에 맞게 Agent Harness (Prompt, Tool, Guardrail 등)을 구성한다면 스케일이 더 큰 환경에서도 사용 가능한 시스템으로 발전시킬 수 있습니다. 
 
-## 5. Limitation
+## 5. Example
 
-Financial Researcher는 agent system을 설계하면서 마주칠수 있는 문제 (Infinite Loop, Hallucination, Broken Communication, high operational costs) 등을
-어떠한 방식으로 해결할 수 있는지에 대해 다룹니다. 
+### [NVIDIA - Fourth quarter of fiscal 2025 (markdown)](./outputs/nvidia_fy2025_q4.md)
 
-이 시스템을 기반으로 목적에 맞게 Agent Harness (Prompt, Tool, Guardrail 등)을 구성한다면 Production-Level에서 사용 가능한 시스템으로 구현할 수 있습니다.
-
-
-## 6. Example
-
-### [NVIDIA - Fourth quarter of fiscal 2025](./outputs/nvidia_fy2025_q4.md)
+### [NVIDIA - Fourth quarter of fiscal 2025 (pptx)](./outputs/nvidia_fy2025_q4.pptx)
 
 ### [System Tracing](./outputs/tracing.png)
 

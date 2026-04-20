@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from dotenv import load_dotenv
 
 from agents import RunResult, RunResultStreaming
+from agents.mcp import MCPServerStreamableHttp
 from langfuse import get_client, observe
 
 from financial_research.agent_factory import (
     financials_agent,
     FinancialSearchItem,
     FinancialSearchPlan,
-    FormattedReport,
+    FormattedPresentation,
     planner_agent,
     risk_agent,
     search_agent,
@@ -20,7 +21,8 @@ from financial_research.agent_factory import (
     verifier_agent,
     FinancialReportData,
     writer_agent,
-    formatter_agent,
+    build_formatter_agent,
+    MCP_URL,
 )
 from tracing.tracing_utils import traced_runner_run
 
@@ -190,20 +192,39 @@ class FinancialResearchManager:
         print("Finished verificiation")
         return verification
 
-    async def _format_report(self, report: FinancialReportData) -> FormattedReport:
-        print("Formatting report for readability...")
-        formatter_input = (
-            f"Report:\n{report.markdown_report}\n\n"
-        )
-        result = await traced_runner_run(
-            agent=formatter_agent,
-            input_data=formatter_input,
-            observation_name="formatter-agent-run",
-            metadata={"stage": "formatting"},
-        )
-        formatted = result.final_output_as(FormattedReport)
+    async def _format_report(self, report: FinancialReportData) -> FormattedPresentation:
+        print("Formatting report as PowerPoint...")
+        async with MCPServerStreamableHttp(
+            name="html-to-ppt",
+            params={"url": MCP_URL},
+            client_session_timeout_seconds=120,
+            cache_tools_list=True,
+        ) as mcp_server:
+            agent = build_formatter_agent(mcp_server)
+            result = await traced_runner_run(
+                agent=agent,
+                input_data=f"Report:\n{report.markdown_report}\n\n",
+                observation_name="formatter-agent-run",
+                metadata={"stage": "formatting"},
+            )
+            formatted = result.final_output_as(FormattedPresentation)
         print("Finished formatting")
         return formatted
+
+    # async def _format_report(self, report: FinancialReportData) -> FormattedReport:
+    #     print("Formatting report for readability...")
+    #     formatter_input = (
+    #         f"Report:\n{report.markdown_report}\n\n"
+    #     )
+    #     result = await traced_runner_run(
+    #         agent=formatter_agent,
+    #         input_data=formatter_input,
+    #         observation_name="formatter-agent-run",
+    #         metadata={"stage": "formatting"},
+    #     )
+    #     formatted = result.final_output_as(FormattedReport)
+    #     print("Finished formatting")
+    #     return formatted
 
     # ------------------------------------------------------------------ #
     # Subagent for writer agent                                          #

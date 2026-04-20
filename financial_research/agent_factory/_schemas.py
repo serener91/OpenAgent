@@ -41,3 +41,8 @@ class VerificationResult(BaseModel):
 class FormattedReport(BaseModel):
     markdown_report: str
     """The fully formatted markdown report, ready for human reading."""
+
+
+class FormattedPresentation(BaseModel):
+    pptx_path: str
+    """Path to the saved .pptx file."""
