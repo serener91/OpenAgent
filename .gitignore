@@ -20,5 +20,8 @@ gpt
 .vscode
 ada
 
-# Custom
-code_assist
+# Claude Code
+.claude/settings.local.json
+
+# Worktrees
+.worktrees/
