@@ -4,6 +4,20 @@
 **Date:** 2026-04-23
 **For:** Developers building on or maintaining this system
 
+> **⚠️ Always check current stable versions.** Framework versions change frequently — `structlog`, `redis-py`, `opentelemetry`, `fastapi`, `openai-agents`, and `fastmcp` all release breaking changes. The version numbers and API patterns in this manual were current as of the document date. Before building, verify each package's current stable version and official documentation.
+>
+> **Key packages to verify:**
+> | Package | Check at |
+> |---------|----------|
+> | structlog | pypi.org/project/structlog |
+> | redis-py | pypi.org/project/redis |
+> | opentelemetry | pypi.org/project/opentelemetry |
+> | fastapi | pypi.org/project/fastapi |
+> | openai-agents | github.com/openai/openai-agents-python/releases |
+> | fastmcp | github.com/prefecthq/fastmcp/releases |
+> | uvicorn | pypi.org/project/uvicorn |
+> | pydantic-settings | pypi.org/project/pydantic-settings |
+
 ---
 
 ## Table of Contents
