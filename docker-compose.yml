@@ -1,0 +1,90 @@
+services:
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/openagent
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=orchestrator
+    depends_on:
+      - redis
+      - postgres
+      - jaeger
+    volumes:
+      - ./services/orchestrator:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  agent_file:
+    build:
+      context: ./services/agents/file_agent
+      dockerfile: Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=file_agent
+      - AGENT_TYPE=file
+    depends_on:
+      - redis
+      - jaeger
+    volumes:
+      - ./services/agents/file_agent:/app
+      - ./tmp/uploads:/tmp/uploads
+
+  mcp_gateway:
+    build:
+      context: ./services/mcp_gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=mcp_gateway
+    depends_on:
+      - redis
+      - jaeger
+    volumes:
+      - ./services/mcp_gateway:/app
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=openagent
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  meilisearch:
+    image: getmeili/meilisearch:latest
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_MASTER_KEY=masterKey
+    volumes:
+      - meilisearch_data:/meili_data
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "6831:6831"
+
+volumes:
+  redis_data:
+  postgres_data:
+  meilisearch_data:
