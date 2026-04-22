@@ -25,6 +25,7 @@ class LLMSettings(BaseSettings):
     model: str = "gpt-4o"
     api_key: str | None = None
     organization: str | None = None
+    base_url: str = "http://localhost:8000"
 
 
 class OTelSettings(BaseSettings):
@@ -55,3 +56,12 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_settings() -> Settings:
+    """Get application settings.
+
+    Returns:
+        Application settings instance.
+    """
+    return settings
