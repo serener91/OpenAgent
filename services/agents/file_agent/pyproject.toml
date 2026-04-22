@@ -4,21 +4,24 @@ version = "0.1.0"
 description = "File agent service"
 requires-python = ">=3.11"
 dependencies = [
-    "agents-base",
+#    "agents-base",
     "redis>=5.2.0",
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
     "opentelemetry-exporter-otlp>=1.28.0",
     "opentelemetry-instrumentation-redis>=0.49b0",
-    "openai-agents-sdk==0.7.0",
+    "openai-agents>=0.0.13",
     "pydantic-settings>=2.6.0",
     "structlog>=25.0.0",
     "python-dotenv>=1.0.0",
 ]
 
-[tool.uv.sources]
-agents-base = { workspace = true }
+#[tool.uv.sources]
+#agents-base = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
