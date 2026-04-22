@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health
+from app.api.routes import health, sessions
 from app.observability.logging import setup_logging
 from app.observability.tracing import setup_tracing
 
@@ -35,6 +35,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api/v1")
+app.include_router(sessions.router, prefix="/api/v1", tags=["sessions"])
 
 
 @app.get("/")
