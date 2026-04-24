@@ -48,12 +48,55 @@ sdk-testbed = [
 
 The `openai-agents` package is an **optional** dependency. Production Docker images exclude it (`uv sync --no-group sdk-testbed`).
 
+### 3.1.1 Import Namespace Hazard (`agents`)
+
+The `openai-agents` package installs itself as a **top-level `agents` module** — `from agents import Agent, Runner`. That name is both generic and conflicts semantically with our internal `services/agents/*` package tree. Two rules apply:
+
+**Rule A — Our code never uses the bare `agents` name.**
+All our internal imports are fully qualified: `from services.agents.base.agent_core_sdk import SDKBackedAgent`. No file anywhere in our codebase may do `from agents import ...` as a reference to *our* package; our package is always `services.agents.*`. A CI guard (ruff custom rule or grep) enforces this.
+
+**Rule B — All SDK imports are aliased on entry.**
+When pulling from the SDK, alias at the import site so downstream code never references a bare `Agent` / `Runner` / `Session` that could be mistaken for one of ours:
+
+```python
+# services/agents/base/agent_core_sdk.py
+from agents import (
+    Agent as OpenAIAgent,
+    Runner as OpenAIRunner,
+    Session as OpenAISession,
+    function_tool as openai_function_tool,
+    input_guardrail as openai_input_guardrail,
+    output_guardrail as openai_output_guardrail,
+    set_tracing_disabled,
+)
+```
+
+**Rule C — SDK tracing is disabled at module load.**
+We do not use the SDK's built-in tracing. OTEL (production) and Langfuse (testbed) are the observability surfaces. Disable immediately on import so no stray trace emitter starts up:
+
+```python
+# services/agents/base/agent_core_sdk.py (at module top, after imports)
+set_tracing_disabled(disabled=True)
+```
+
+This must happen **before** any `OpenAIAgent` or `OpenAIRunner` is constructed. Put the call at module scope, not inside `__init__`, so it runs exactly once when the adapter module is imported.
+
 ### 3.2 Class Layout
 
 ```python
 # services/agents/base/agent_core_sdk.py
-from agents import Agent as SDKAgent, Runner
-from agents import function_tool, Session as SDKSession, input_guardrail, output_guardrail
+from agents import (
+    Agent as OpenAIAgent,
+    Runner as OpenAIRunner,
+    Session as OpenAISession,
+    function_tool as openai_function_tool,
+    input_guardrail as openai_input_guardrail,
+    output_guardrail as openai_output_guardrail,
+    set_tracing_disabled,
+)
+
+# Disable SDK's built-in tracing at module load — we use OTEL + Langfuse.
+set_tracing_disabled(disabled=True)
 
 from services.common.interfaces import BaseAgent, Task, Result, AgentEvent
 from services.common.interfaces import LLMClient, MCPClient, SessionStore, GuardrailRegistry
@@ -61,6 +104,7 @@ from services.common.interfaces import LLMClient, MCPClient, SessionStore, Guard
 class SDKBackedAgent(BaseAgent):
     """
     Implements BaseAgent by delegating to the OpenAI Agents SDK.
+    SDK imports are aliased to avoid collision with services.agents.*.
     """
 
     def __init__(
@@ -68,7 +112,7 @@ class SDKBackedAgent(BaseAgent):
         *,
         name: str,
         system_prompt: str,
-        tools: list,                    # SDK @function_tool definitions
+        tools: list,                    # wrapped via openai_function_tool
         llm_client: LLMClient,          # Our LLMClient — adapted to SDK internally
         mcp_client: MCPClient,          # Our MCPClient — SDK tools wrap these calls
         session_store: SessionStore,    # Our SessionStore — we bridge to SDK Session
@@ -77,7 +121,7 @@ class SDKBackedAgent(BaseAgent):
         self.name = name
         self._session_store = session_store
         self._guardrails = guardrails
-        self._sdk_agent = SDKAgent(
+        self._sdk_agent = OpenAIAgent(
             name=name,
             instructions=system_prompt,
             tools=tools,
@@ -88,7 +132,7 @@ class SDKBackedAgent(BaseAgent):
 
     async def run(self, task: Task) -> Result:
         sdk_session = await self._bridge_session(task.session_id)
-        run_result = await Runner.run(
+        run_result = await OpenAIRunner.run(
             self._sdk_agent,
             input=task.prompt,
             session=sdk_session,
@@ -98,7 +142,7 @@ class SDKBackedAgent(BaseAgent):
 
     async def run_streamed(self, task: Task):
         sdk_session = await self._bridge_session(task.session_id)
-        async for sdk_event in Runner.run_streamed(
+        async for sdk_event in OpenAIRunner.run_streamed(
             self._sdk_agent,
             input=task.prompt,
             session=sdk_session,
@@ -120,7 +164,9 @@ Our `Guardrail` protocol is authoritative. For each of our guardrails, we wrap i
 
 ```python
 def _adapt_guardrail(self, g: Guardrail):
-    @input_guardrail  # or output_guardrail based on g.kind
+    decorator = openai_input_guardrail if g.kind == "input" else openai_output_guardrail
+
+    @decorator
     async def wrapped(ctx, agent, payload):
         decision = await g.check(payload)
         return GuardrailFunctionOutput(
@@ -138,7 +184,7 @@ The SDK's `@function_tool` expects Python callables. Our MCP-backed tools become
 
 ```python
 def mcp_tool_as_sdk_tool(mcp_client: MCPClient, tool_spec: ToolSpec):
-    @function_tool(name=tool_spec.name, description=tool_spec.description)
+    @openai_function_tool(name=tool_spec.name, description=tool_spec.description)
     async def impl(**kwargs):
         result = await mcp_client.call_tool(tool_spec.name, kwargs)
         return result.content
@@ -237,6 +283,8 @@ Expected porting effort per agent: **1–2 hours** once the manual core and MCP 
 
 The SDK variant additionally integrates with **Langfuse**, an LLM-specific observability tool, to accelerate prompt and behavior iteration. This is **testbed-only**; the manual core does not touch Langfuse at all.
 
+> **Version note:** Langfuse's Python SDK was rewritten on top of OpenTelemetry starting with v3. The API shown here targets v3+ (`get_client`, `start_as_current_observation`, `current_trace_span().update_trace(...)`). The legacy v2 `langfuse_context` / `langfuse.decorators.langfuse_context` import path is **not** used.
+
 ### 9.1 Why Langfuse Here and Not Everywhere
 
 - OTEL remains the system-wide tracing backbone (covers Redis Streams, MCP Gateway, Postgres, HTTP — things Langfuse does not)
@@ -251,67 +299,109 @@ The SDK variant additionally integrates with **Langfuse**, an LLM-specific obser
 [project.optional-dependencies]
 sdk-testbed = [
   "openai-agents>=0.14.3,<0.15",
-  "langfuse>=2.50,<3",   # LLM-specific observability (testbed only)
+  "langfuse>=3.0,<4",   # OTEL-based SDK; LLM-specific observability (testbed only)
 ]
 ```
 
-Production `uv sync --no-group sdk-testbed` excludes both. A CI job asserts the production image has zero `langfuse` imports reachable.
+> **Version check at implementation time.** Verify current Langfuse Python SDK version on [PyPI](https://pypi.org/project/langfuse) and adjust the pin. If v4 has reached stable and the API surface we use below (`get_client`, `start_as_current_observation`, `current_trace_span().update_trace`) is unchanged or forward-compatible, widening the pin to `>=3.0,<5` is acceptable.
 
-### 9.3 Wiring
+Production `uv sync --no-group sdk-testbed` excludes Langfuse. A CI guard asserts the production image has zero reachable `langfuse` imports.
+
+### 9.3 Initialization
+
+Langfuse is initialized once per worker process using environment-variable credentials. We let `get_client()` read the env rather than passing keys explicitly, so testbed and developer environments behave identically:
 
 ```python
-# services/agents/base/agent_core_sdk.py (additions)
-from langfuse import Langfuse
-from langfuse.decorators import observe, langfuse_context
+# services/agents/base/observability_testbed.py
+import os
+from langfuse import Langfuse, get_client
 
 _langfuse: Langfuse | None = None
 
-def _maybe_init_langfuse(settings) -> Langfuse | None:
-    if not settings.langfuse_enabled:
+def init_langfuse_if_enabled() -> Langfuse | None:
+    """Called once at worker startup. Returns None if disabled."""
+    global _langfuse
+    if os.environ.get("LANGFUSE_ENABLED", "false").lower() != "true":
         return None
-    return Langfuse(
-        host=settings.langfuse_host,
-        public_key=settings.langfuse_public_key,
-        secret_key=settings.langfuse_secret_key,
-    )
+    if _langfuse is not None:
+        return _langfuse
+    # Reads LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST from env.
+    _langfuse = get_client()
+    # Sanity check; raises if credentials are wrong. Testbed-only, so fail fast.
+    _langfuse.auth_check()
+    return _langfuse
+
+def get_langfuse() -> Langfuse | None:
+    return _langfuse
+```
+
+### 9.4 Wiring Into `SDKBackedAgent`
+
+```python
+# services/agents/base/agent_core_sdk.py  (additions)
+from services.agents.base.observability_testbed import get_langfuse
 
 class SDKBackedAgent(BaseAgent):
-    def __init__(self, *, name, ..., settings):
-        ...
-        self._langfuse = _maybe_init_langfuse(settings)
-
     async def run(self, task: Task) -> Result:
-        if self._langfuse:
-            langfuse_context.update_current_trace(
-                name=f"agent.run/{self.name}",
+        lf = get_langfuse()
+        if lf is None:
+            return await self._run_inner(task)
+
+        # Langfuse v3 is OTEL-based; start_as_current_observation creates an
+        # OTEL span that Langfuse automatically captures.
+        with lf.start_as_current_observation(
+            as_type="span",
+            name=f"agent.run/{self.name}",
+            input={"prompt": task.prompt, "context": task.context},
+        ) as span:
+            lf.current_trace_span().update_trace(
                 user_id=task.user_id,
                 session_id=task.session_id,
                 metadata={"agent.core": "sdk", "task_id": task.task_id},
+                tags=[f"agent:{self.name}"],
             )
-        return await self._run_inner(task)
+            try:
+                result = await self._run_inner(task)
+                span.update(output={"content": result.content, "status": result.status})
+                return result
+            except Exception as e:
+                span.update(level="ERROR", status_message=str(e))
+                raise
 ```
 
-The `@observe` decorator is applied to LLM call and tool call sites — already instrumented by the SDK's own Langfuse integration in most cases; we add a top-level trace annotation to propagate `user_id`/`session_id`.
+`run_streamed` follows the same pattern: wrap the stream body in `start_as_current_observation`, call `update_trace` once, and update the span on terminal event.
 
-### 9.4 Trace Shape
+### 9.5 Trace Shape
 
 A Langfuse trace mirrors an agent run:
 
 - **Trace name:** `agent.run/<agent_name>`
-- **User id:** `task.user_id`
-- **Session id:** `task.session_id` — lets Langfuse group all runs by chat session
-- **Metadata:** `{agent.core: sdk, task_id, model, ...}`
-- **Generations:** one per LLM call, with input/output messages and token counts
+- **User ID:** `task.user_id` (via `update_trace(user_id=...)`)
+- **Session ID:** `task.session_id` — groups all agent runs by chat session in the Langfuse UI
+- **Tags:** `["agent:<name>"]`
+- **Metadata:** `{agent.core: "sdk", task_id, model, ...}`
+- **Generations:** one per LLM call, with input/output messages and token counts. For the OpenAI Agents SDK, set `as_type="generation"` around the LLM dispatch point (the SDK's internal dispatcher).
 - **Spans:** one per tool call, with arguments + result
-- **Score events:** optional, emitted by guardrails (e.g., `guardrail.verdict`)
+- **Score events:** optional, emitted by guardrails (e.g., `langfuse.score(name="guardrail.verdict", value=..., trace_id=...)`)
 
-### 9.5 Relationship to OTEL
+### 9.6 Relationship to OTEL
 
-- OTEL and Langfuse both receive the same logical events
-- Trace correlation: we set Langfuse's `trace_id` to match OTEL's `trace_id` via `langfuse_context.update_current_trace(id=otel_trace_id)` so developers can jump from Jaeger to Langfuse and vice versa
-- **If Langfuse is unreachable or disabled, the agent continues unaffected** — all Langfuse calls are non-blocking with timeouts, and errors are logged but swallowed
+Because Langfuse v3 is OTEL-native, **trace-ID correlation is automatic** when OTEL is already configured in the process. We do not need to manually copy the OTEL `trace_id` into Langfuse. Rules:
 
-### 9.6 Configuration
+- Initialize OTEL (Jaeger exporter) **first** at process startup
+- Initialize Langfuse **after** OTEL — it attaches to the running OTEL tracer
+- Any span created via `lf.start_as_current_observation(...)` shows up in *both* Jaeger and Langfuse with the same trace ID
+- Developers can paste a trace ID from one UI into the other
+
+If OTEL is disabled (unusual), Langfuse still works standalone; correlation is just lost.
+
+### 9.7 Error Handling and Back-Pressure
+
+- `auth_check()` at init is the only blocking call. After that, span operations are buffered and flushed asynchronously by the SDK.
+- If Langfuse backend is unreachable mid-run, the SDK drops events and logs locally — **the agent run is never blocked or failed by Langfuse outages**.
+- On clean worker shutdown, call `lf.flush()` to drain pending events. SIGTERM handler in the run-worker does this.
+
+### 9.8 Configuration
 
 ```env
 # .env (testbed profile only)
@@ -321,9 +411,9 @@ LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 ```
 
-Production `.env` either omits these or sets `LANGFUSE_ENABLED=false`. The env loader hard-fails a production build that has Langfuse enabled.
+Production `.env` either omits these or sets `LANGFUSE_ENABLED=false`. The env loader **hard-fails a production build that has Langfuse enabled** (startup assertion: `assert not (env.is_production and env.langfuse_enabled)`).
 
-### 9.7 Out of Scope for v1.2
+### 9.9 Out of Scope for v1.2
 
 - Pushing evaluation datasets from Langfuse into DeepEval suites (manual export for now)
 - Langfuse prompt management as the source of truth for system prompts (prompts stay in code under `services/agents/<agent>/prompts/`)
