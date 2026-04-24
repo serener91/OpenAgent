@@ -39,7 +39,8 @@
 17. [Project Structure](#17-project-structure)
 18. [Implementation Phases](#18-implementation-phases)
 19. [Design Decisions Summary](#19-design-decisions-summary)
-20. [Changelog](#20-changelog)
+20. [Durable Agent Runs Overview](#20-durable-agent-runs-overview)
+21. [Changelog](#21-changelog)
 
 ---
 
@@ -389,10 +390,26 @@ No cross-session ordering guarantee. Within a session, the orchestrator calls su
 
 ### 8.4 Conversation Persistence
 
-Session history is **ephemeral** (Redis, 24h). For durable history:
+Session history is **ephemeral** (Redis, 24h). For durable history we use **async-non-blocking per-turn writes** to Postgres — never batch-nightly, never synchronous on the SSE path.
 
-- On each message turn, orchestrator writes the user message + final assistant response to Postgres `messages` table (see schema in §17)
-- Reconstruction on session expiry: orchestrator can lazy-load the last N turns from Postgres into a fresh Redis session
+**Model.** Per turn (user message + final assistant response + tool-call summary):
+
+1. SSE stream completes the `done` event to the client first.
+2. A record is enqueued to an in-process `asyncio.Queue` (the "persist queue").
+3. A dedicated persistence worker task (one per orchestrator replica) consumes the queue and writes to Postgres `messages` with `tenacity`-wrapped retries (exponential backoff, max 3 attempts).
+4. On retry exhaustion, the record is pushed to a Redis-backed DLQ (`stream:persist:dlq`) for operator inspection and later replay.
+
+**Why not nightly batch.** Batch windows create a gap where a crash loses every turn in-flight. Conversations double as the audit trail for guardrail blocks and user actions; losing them is a compliance and debugging problem. Per-turn write cost at projected scale (~1–2 inserts/sec) is well within Postgres headroom.
+
+**Why not Celery/arq/dramatiq for this.** It's in-process fire-and-forget work. A task queue adds infra (separate worker processes, broker operations, result backend) without solving anything the asyncio queue doesn't already handle. See §20 for the workload that *does* justify durable execution infrastructure.
+
+**Backpressure.** The persist queue has a bounded `maxsize` (default 10,000). If full, `put_nowait` raises — the orchestrator logs a `persist_queue_full` metric, exports an alerting span, and falls through to a synchronous write for that turn. Hitting this cap indicates Postgres is unhealthy; alerts should fire before the queue saturates.
+
+**Graceful shutdown.** On SIGTERM, the orchestrator stops accepting new requests, drains the persist queue (up to a configurable deadline, default 30s), then exits. Anything still in-queue at deadline is pushed to the Redis DLQ before exit.
+
+**Reconstruction.** On session expiry or cold-start after Redis eviction, the orchestrator lazy-loads the last N turns from Postgres `messages` into a fresh Redis session.
+
+**Reference implementation** lives in `services/orchestrator/core/persistence.py`. Corresponding metrics and DLQ operator playbook are defined in the Dashboard sub-spec.
 
 ---
 
@@ -529,6 +546,15 @@ Prometheus metric naming finalized in Dashboard sub-spec. High-level groups: `or
   - Production: 10% of traces sampled at full detail; 100% of traces carrying a `guardrail.decision=blocked` span forced-sampled
   - Development: 100%
 
+### 11.6 Langfuse (Testbed Only)
+
+For the SDK variant of the agent core (`2026-04-23-agent-core-sdk.md`) we additionally enable **Langfuse** as an LLM-specific observability layer. Langfuse captures prompt/completion pairs, tool-call traces, and session-level quality signals in a form optimized for LLM debugging and prompt iteration.
+
+- **Scope:** testbed only. Production (manual agent core) stays on OTEL + Prometheus + Jaeger.
+- **Why not replace OTEL:** Langfuse is LLM-specific; OTEL is our system-wide tracing backbone. They complement — we do not depend on Langfuse for any production path.
+- **Wiring:** see `2026-04-23-agent-core-sdk.md` §9.
+- **No production coupling:** the manual agent core has zero Langfuse code paths. Removing the SDK variant deletes all Langfuse integration cleanly.
+
 ---
 
 ## 12. Guardrails Overview
@@ -588,11 +614,22 @@ Implication for v1.2: the system will survive normal failures but will not grace
 
 ### 16.2 Multi-tenancy & Data Isolation (stub)
 
-What's in v1.2: single-tenant assumption; all users share one Postgres DB, one Meilisearch index, one Redis namespace. API keys scoped to a user (not to a tenant).
+**v1.2 is single-tenant by design.** The intended deployment shape is one on-prem install per organization, serving many concurrent users within that organization. "Many concurrent users" is a *scale* concern (addressed by stateless orchestrator replicas, Redis Streams fan-out, horizontal scaling) — not a *multi-tenancy* concern. The two are distinct and the spec treats them as such.
 
-What's deferred: Postgres Row-Level Security for per-tenant data isolation, Meilisearch index-per-tenant or attribute filtering, tenant-scoped session namespaces, tenant admin APIs, tenant-level rate limits and billing.
+What's in v1.2:
+- Single shared Postgres DB, single Meilisearch index, single Redis namespace
+- API keys scoped to a **user** (not to a tenant)
+- No tenant concept exists in any data model, no `tenant_id` column, no tenant-aware auth
 
-Implication for v1.2: **do not deploy as a multi-tenant SaaS.** On-prem single-org deployment is the intended shape until the multi-tenancy spec lands.
+What's deferred (explicitly v2, not v1.3):
+- Postgres Row-Level Security for per-tenant data isolation
+- Meilisearch index-per-tenant or attribute filtering
+- Tenant-scoped session namespaces
+- Tenant admin APIs
+- Tenant-level rate limits and billing
+- Cross-tenant data-leak test harness
+
+**Non-goal for v1.2:** Do not attempt to retrofit tenant isolation on top of v1.2. Multi-tenancy changes data-model assumptions across every storage layer; that's a v2 redesign, not an increment. If multi-tenant deployment becomes a real requirement, it gets a dedicated design pass.
 
 ### 16.3 Deployment & Ops (stub)
 
@@ -766,7 +803,42 @@ Revised sequencing: MCP Gateway before agents (agents depend on it); evaluation 
 
 ---
 
-## 20. Changelog
+## 20. Durable Agent Runs Overview
+
+Full design in `2026-04-23-durable-agent-runs.md`. Summary:
+
+**Motivation.** Chat turns are short (seconds, SSE-attached). But some agent work is **long-running** — a deep-research job that searches, self-critiques, formats, and saves a report may take hours. The user should be able to kick it off, close the browser or start a new session, and come back later to see the result. Losing such a job to an orchestrator restart is unacceptable.
+
+**Two distinct workloads.** These do not share infrastructure:
+
+| | Chat turn | Durable run |
+|---|---|---|
+| Duration | <100ms–30s | minutes to hours |
+| User attached | Yes (SSE) | No (detaches) |
+| Survives restart | N/A | **Required** |
+| Mid-task state | None | Checkpoints every step |
+| Observable | SSE only | `GET /runs/{id}` anytime |
+| Cancellable | No | Yes |
+
+**v1.2 approach.** Redis Streams + Postgres checkpoint table, reusing the same streams-based fabric used for sub-agent dispatch. `agent_runs` table in Postgres stores canonical state; worker checkpoints after every LLM call or tool call. On worker crash, XAUTOCLAIM resurrects the run to another worker, which resumes from the last checkpoint.
+
+**Deliberately not chosen for v1.2.**
+- **Temporal** — correct industrial-grade answer; premature for one workflow type; revisit at v2.
+- **Celery / arq / dramatiq** — task queues, not durable execution; don't solve checkpointing, which is the hard part.
+- **Postgres-as-queue** — works, but we already have Redis Streams running; don't introduce a second queueing primitive.
+
+**Key primitives (see sub-spec for full design):**
+- `Run` as a first-class concept; sessions and runs are orthogonal (runs outlive sessions)
+- Checkpoint protocol agents implement: `await ctx.checkpoint(state, step=N)` after each step
+- `POST /runs`, `GET /runs/{id}`, `GET /runs/{id}/stream`, `DELETE /runs/{id}` on the public API
+- Cancellation is cooperative (worker checks `cancel_requested` between steps)
+- DLQ + operator replay for runs that fail their retry budget
+
+**Relationship to §8 (sessions).** A session can *launch* a run but does not *own* its lifecycle. Run results are pushed to the launching session if still active, and always persisted to `agent_runs.result` for later retrieval. A user can list their runs via `GET /runs?user_id=me` regardless of session state.
+
+---
+
+## 21. Changelog
 
 ### v1.2 (2026-04-23)
 
@@ -805,11 +877,19 @@ Revised sequencing: MCP Gateway before agents (agents depend on it); evaluation 
 - `dashboard-and-ops-ui.md`
 - `agent-evaluation-and-testing.md`
 - `security.md`
+- `durable-agent-runs.md`
 
 **Version bumps**
 - FastAPI: 0.128.0 → ≥0.136.0
 - FastMCP: confirmed v3.2.4
 - Python: held at 3.13
+
+**Critical-review amendments (2026-04-24)**
+- §8.4 conversation persistence made explicit as **async-non-blocking per-turn writes** via in-process `asyncio.Queue` + Redis DLQ on retry exhaustion. Celery/arq explicitly rejected for this workload.
+- §11.6 Langfuse added as **testbed-only** observability, complement to OTEL, no production coupling.
+- §16.2 multi-tenancy stub **tightened to single-tenant Case A** and explicitly labeled a v2 redesign (not a v1.3 increment). Scale ≠ multi-tenancy clarified.
+- §20 + new sub-spec `durable-agent-runs.md` introduced to cover long-running agent work (deep research, hours-scale jobs) with Redis-Streams + Postgres-checkpoint design. Temporal deferred to v2.
+- `services/` kept (not renamed to `src/`); multi-service monorepo convention retained.
 
 ### v1.1 (2026-04-22)
 - Prior version; superseded by this document

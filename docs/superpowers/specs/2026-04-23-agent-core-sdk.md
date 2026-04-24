@@ -233,4 +233,102 @@ Expected porting effort per agent: **1–2 hours** once the manual core and MCP 
 
 ---
 
+## 9. Observability (Testbed) — Langfuse
+
+The SDK variant additionally integrates with **Langfuse**, an LLM-specific observability tool, to accelerate prompt and behavior iteration. This is **testbed-only**; the manual core does not touch Langfuse at all.
+
+### 9.1 Why Langfuse Here and Not Everywhere
+
+- OTEL remains the system-wide tracing backbone (covers Redis Streams, MCP Gateway, Postgres, HTTP — things Langfuse does not)
+- Langfuse is specialized: prompt/completion/tool-call views, session-aware quality signals, side-by-side prompt comparison, dataset-backed run grading
+- During testbed work, developers iterate on prompts and want LLM-focused ergonomics the OTEL+Jaeger pairing does not give them
+- Coupling this to the SDK variant keeps production dependency-free
+
+### 9.2 Optional Dependency
+
+```toml
+# services/agents/pyproject.toml (testbed extra — extends sdk-testbed)
+[project.optional-dependencies]
+sdk-testbed = [
+  "openai-agents>=0.14.3,<0.15",
+  "langfuse>=2.50,<3",   # LLM-specific observability (testbed only)
+]
+```
+
+Production `uv sync --no-group sdk-testbed` excludes both. A CI job asserts the production image has zero `langfuse` imports reachable.
+
+### 9.3 Wiring
+
+```python
+# services/agents/base/agent_core_sdk.py (additions)
+from langfuse import Langfuse
+from langfuse.decorators import observe, langfuse_context
+
+_langfuse: Langfuse | None = None
+
+def _maybe_init_langfuse(settings) -> Langfuse | None:
+    if not settings.langfuse_enabled:
+        return None
+    return Langfuse(
+        host=settings.langfuse_host,
+        public_key=settings.langfuse_public_key,
+        secret_key=settings.langfuse_secret_key,
+    )
+
+class SDKBackedAgent(BaseAgent):
+    def __init__(self, *, name, ..., settings):
+        ...
+        self._langfuse = _maybe_init_langfuse(settings)
+
+    async def run(self, task: Task) -> Result:
+        if self._langfuse:
+            langfuse_context.update_current_trace(
+                name=f"agent.run/{self.name}",
+                user_id=task.user_id,
+                session_id=task.session_id,
+                metadata={"agent.core": "sdk", "task_id": task.task_id},
+            )
+        return await self._run_inner(task)
+```
+
+The `@observe` decorator is applied to LLM call and tool call sites — already instrumented by the SDK's own Langfuse integration in most cases; we add a top-level trace annotation to propagate `user_id`/`session_id`.
+
+### 9.4 Trace Shape
+
+A Langfuse trace mirrors an agent run:
+
+- **Trace name:** `agent.run/<agent_name>`
+- **User id:** `task.user_id`
+- **Session id:** `task.session_id` — lets Langfuse group all runs by chat session
+- **Metadata:** `{agent.core: sdk, task_id, model, ...}`
+- **Generations:** one per LLM call, with input/output messages and token counts
+- **Spans:** one per tool call, with arguments + result
+- **Score events:** optional, emitted by guardrails (e.g., `guardrail.verdict`)
+
+### 9.5 Relationship to OTEL
+
+- OTEL and Langfuse both receive the same logical events
+- Trace correlation: we set Langfuse's `trace_id` to match OTEL's `trace_id` via `langfuse_context.update_current_trace(id=otel_trace_id)` so developers can jump from Jaeger to Langfuse and vice versa
+- **If Langfuse is unreachable or disabled, the agent continues unaffected** — all Langfuse calls are non-blocking with timeouts, and errors are logged but swallowed
+
+### 9.6 Configuration
+
+```env
+# .env (testbed profile only)
+LANGFUSE_ENABLED=true
+LANGFUSE_HOST=https://langfuse.internal
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+Production `.env` either omits these or sets `LANGFUSE_ENABLED=false`. The env loader hard-fails a production build that has Langfuse enabled.
+
+### 9.7 Out of Scope for v1.2
+
+- Pushing evaluation datasets from Langfuse into DeepEval suites (manual export for now)
+- Langfuse prompt management as the source of truth for system prompts (prompts stay in code under `services/agents/<agent>/prompts/`)
+- Any production agent depending on Langfuse being available at runtime
+
+---
+
 *End of Document*
