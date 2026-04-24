@@ -25,5 +25,8 @@ def otel_exporter() -> InMemorySpanExporter:
     )
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(SimpleSpanProcessor(exporter))
+    # Reset OTEL's set-once guard so repeated fixture use works across tests
+    trace._TRACER_PROVIDER_SET_ONCE = trace.Once()  # type: ignore[attr-defined]
+    trace._TRACER_PROVIDER = None  # type: ignore[attr-defined]
     trace.set_tracer_provider(provider)
     return exporter
