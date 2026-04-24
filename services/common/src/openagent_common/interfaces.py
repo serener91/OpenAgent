@@ -20,6 +20,10 @@ class BaseAgent(Protocol):
     async def run(self, task: Task) -> Result:
         ...
 
+    # Declared plain `def` (not `async def`) so an async-generator body —
+    # `async def run_streamed(...): ... yield ...` — satisfies the Protocol.
+    # Called without `await`; iterated with `async for`. Matches umbrella §5.1
+    # and the concrete forms in agent-core-{sdk,manual}.md.
     def run_streamed(self, task: Task) -> AsyncIterator[AgentEvent]:
         ...
 

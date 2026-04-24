@@ -105,6 +105,11 @@ async def test_fake_agent_run_returns_result() -> None:
 async def test_fake_agent_run_streamed_yields_events() -> None:
     agent = FakeAgent()
     task = Task(task_id="t1", session_id="s1", user_id="u1", prompt="hi")
-    events = [e async for e in agent.run_streamed(task)]
+    # run_streamed is called without `await` — it returns an async iterator
+    # directly (either from an async-generator body like FakeAgent's, or from
+    # a plain `def` that constructs one). The Protocol is typed accordingly.
+    stream = agent.run_streamed(task)
+    assert hasattr(stream, "__aiter__"), "run_streamed must return an async iterator, not a coroutine"
+    events = [e async for e in stream]
     assert len(events) == 1
     assert events[0].kind == "done"
