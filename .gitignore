@@ -1,30 +1,35 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
-# Virtual environments
-.venv
-.ruff_cache
+# UV
+.venv/
+*.pyc
+
+# Env
 .env
-gpt
+.env.local
+.env.*.local
 
+# IDE
+.idea/
+.vscode/
+*.swp
 
-# Pycharm
-.idea
+# OS
+.DS_Store
+Thumbs.db
 
-# vscode
-.vscode
-ada
+# Alembic local override (we commit versions/)
+# (nothing to ignore here right now)
 
-# Claude Code
-.claude/settings.local.json
-
-# Worktrees
-.worktrees/
-
-temps
-reference
+# Docker volumes (only applies if local mounts are made by dev)
+/tmp/

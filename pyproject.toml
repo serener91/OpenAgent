@@ -1,0 +1,38 @@
+[project]
+name = "openagent-workspace"
+version = "0.0.0"
+description = "OpenAgent monorepo root (UV workspace)"
+requires-python = ">=3.13"
+
+[tool.uv.workspace]
+members = ["services/common"]
+
+[tool.uv]
+dev-dependencies = [
+  "pytest>=8.1",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=4.1",
+  "ruff>=0.4",
+  "mypy>=1.10",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "N"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["services/common/tests", "tests"]
+markers = [
+  "integration: requires docker-compose stack (opt in with -m integration)",
+]
+addopts = "-ra --strict-markers"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+ignore_missing_imports = true
