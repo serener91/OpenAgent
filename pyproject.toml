@@ -7,8 +7,12 @@ requires-python = ">=3.13"
 [tool.uv.workspace]
 members = ["services/common"]
 
+[tool.uv.sources]
+openagent-common = { workspace = true }
+
 [tool.uv]
 dev-dependencies = [
+  "openagent-common",
   "pytest>=8.1",
   "pytest-asyncio>=0.23",
   "pytest-cov>=4.1",
