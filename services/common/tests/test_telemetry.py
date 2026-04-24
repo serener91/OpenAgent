@@ -37,6 +37,9 @@ def test_configure_tracing_installs_global_provider(
     provider = trace.get_tracer_provider()
     # The installed provider should carry our service.name
     assert provider.resource.attributes["service.name"] == "mcp_gateway"  # type: ignore[attr-defined]
+    # Stop the BatchSpanProcessor's background thread so it doesn't keep
+    # retrying to export to localhost:4317 after the test returns.
+    provider.shutdown()  # type: ignore[attr-defined]
 
 
 def test_span_emission_with_in_memory_exporter(otel_exporter) -> None:
